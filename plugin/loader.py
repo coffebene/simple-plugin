@@ -1,6 +1,15 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+"""
+该模块用于实现插件热插拔
+使用方式有以下两种：
+1. loadPlugins 自动导入插件
+    如果是自动导入插件，那么模块的顺序会影响插件执行顺序！！！
+2. loadPlugin 手动导入插件
+    如果是手动导入插件，那么手动导入的顺序会影响插件运行顺序！！！
+"""
+
 import os
 import imp
 import glob
@@ -26,24 +35,31 @@ def md5Sum(entry):
 class PluginLoader(object):
     """plugin加载器。根据plugins目录查找并导入文件"""
     
-    def __init__(self, pluginDir):
-        self.plugins = {}  # 存放加载的模块信息
-        if not os.path.isdir(pluginDir):
+    def __init__(self, pluginDir=None):
+        self.plugins = []  # 存放加载的模块信息,使用列表是因为列表有序
+        if pluginDir and not os.path.isdir(pluginDir):
             raise ValueError("%s must be dir" % pluginDir)
         self.pluginDir = pluginDir  # 模块路径
+    
+    # 返回插件名称
+    @property
+    def pluginsName(self):
+        pluginName = [i.keys()[0] for i in self.plugins]
+        return pluginName
     
     # 查找可导入的module
     def findPlugins(self, pluginDir=None, loop=False):
         """遍历目录，查找可导入plugin
         参数：
             pluginDir: 查找路径
-            loop: 是否递归导入子包中的模块
+            loop: 是否在子目录中递归加载插件
         """
         plugins = []
-        if not pluginDir or not os.path.isdir(pluginDir):
+        if not (pluginDir and os.path.isdir(pluginDir)):
             pluginDir = self.pluginDir
         # 遍历目录
         for item in os.listdir(pluginDir):
+            # 文件拆分为文件名和后缀
             moduleName, suffix = os.path.splitext(item)
             location = os.path.join(pluginDir, item)
             if os.path.isdir(location):
@@ -59,44 +75,52 @@ class PluginLoader(object):
     
     # 加载plugin。调用findPlugins查找可用plugin并加载
     def loadPlugins(self, pluginDir=None, loop=None):
-        for plugin in self.findPlugins(pluginDir=pluginDir, loop=loop):
+        newPlugins = self.findPlugins(pluginDir=pluginDir, loop=loop)
+        # 删除已卸载的插件，加载新的插件
+        plugins = []
+        for plugin in newPlugins:
+            newPlugin = {}
             try:
-                module = {"module": imp.load_module(plugin["name"], *plugin["info"]), "md5": plugin["md5"]}
-                self.plugins[plugin["name"]] = module
+                p = {"module": imp.load_module(plugin["name"], *plugin["info"]), "md5": plugin["md5"]}
+                newPlugin[plugin["name"]] = p
+            except ImportError:
+                continue
+            else:
+                plugins.append(newPlugin)
             finally:
                 if plugin["info"][0]:
                     plugin["info"][0].close()
-        
+        self.plugins = plugins
         return self.plugins
     
     # 查找module
     def findPlugin(self, pluginDir=None, moduleName=None, loop=False):
-        """查找moduleName，并计算md5
+        """查找moduleName，并计算md5。如果开启了递归查找，则采用深度优先算法查找模块。
         
         入参：
             pluginDir: 插件目录
             moduleName: 要查找的模块名称
-            loop: 如果导入模块是包，是否递归导入子包
+            loop: 如果父目录不存在该模块，是否在子目录中递归查找
         """
+        ok, plugin = False, {}
         # 构建寻找路径
-        if pluginDir:
-            location = os.path.join(pluginDir, moduleName)
-        else:
-            location = os.path.join(self.pluginDir, moduleName)
-        # 合法性校验
-        if not (os.path.isfile(location) or os.path.isdir(location)):
-            return False, "file or dir not exist"
+        if not (pluginDir and os.path.isdir(pluginDir)):
+            pluginDir = self.pluginDir
         # 模块导入
         try:
-            fd, pathName, des = imp.find_module(moduleName, [location])
+            fd, pathName, des = imp.find_module(moduleName, [pluginDir])
+            plugin = {"name": moduleName, "info": (fd, pathName, des), "md5": md5Sum(pathName)}
+            ok = True
         except ImportError as e:
-            return False, e
-        # 判断是否递归导入
-        if not fd and des[2] == imp.PKG_DIRECTORY and loop:
-            self.findPlugin(pluginDir=pathName, moduleName=moduleName, loop=loop)
-        # 插件信息
-        plugin = {"name": moduleName, "info": (fd, pathName, des), "md5": md5Sum(location + des[0])}
-        return True, plugin
+            if not loop:
+                return False, e
+            for item in os.listdir(pluginDir):
+                location = os.path.join(pluginDir, item)
+                if os.path.isdir(location):
+                    ok, plugin = self.findPlugin(pluginDir=location, moduleName=moduleName, loop=loop)
+                    if ok:
+                        return ok, plugin
+        return ok, plugin
     
     # 加载module
     def loadPlugin(self, pluginDir=None, moduleName=None, loop=False):
@@ -105,23 +129,42 @@ class PluginLoader(object):
         入参：
             pluginDir: 插件目录
             moduleName: 要导入的模块名称
-            loop: 如果导入模块是包，是否递归导入子包
+            loop: 如果父目录不存在该模块，是否在子目录中递归查找
         """
         ok, plugin = self.findPlugin(pluginDir=pluginDir, moduleName=moduleName, loop=loop)
+        # 如果不存在模块，则删除之前的缓存
+        pluginsName = self.pluginsName
         if not ok:
+            if moduleName in pluginsName:
+                self.delete(moduleName)
             return ok, plugin
-        
         try:
-            if plugin["name"] not in self.plugins:  # 新增模块
-                self.plugins[plugin["name"]] = {}
-                self.plugins[plugin["name"]]["module"] = imp.load_module(plugin["name"], *plugin["info"])
-                self.plugins[plugin["name"]]["md5"] = plugin["md5"]
-            elif plugin["md5"] != self.plugins[plugin["name"]]["md5"]:  # 更新模块
-                self.plugins[plugin["name"]]["module"] = imp.load_module(plugin["name"], *plugin["info"])
-                self.plugins[plugin["name"]]["md5"] = plugin["md5"]
+            newPlugin = {}
+            if plugin["name"] not in pluginsName:  # 新增模块
+                newPlugin = {"module": imp.load_module(plugin["name"], *plugin["info"]), "md5": plugin["md5"]}
+                self.plugins.append({plugin["name"]: newPlugin})
+            else:  # 更新模块
+                for i in self.plugins:
+                    for name, moduleInfo in i.items():
+                        if name == plugin["name"]:
+                            if moduleInfo["md5"] != plugin["md5"]:
+                                newPlugin = {"module": imp.load_module(plugin["name"], *plugin["info"]),
+                                             "md5": plugin["md5"]}
+                                i[name] = newPlugin
+                            else:
+                                newPlugin = moduleInfo
         except ImportError:
             return False, None
         finally:
             if plugin["info"][0]:
                 plugin["info"][0].close()
-        return True, self.plugins[plugin["name"]]["module"]
+        return True, newPlugin
+    
+    # 删除插件
+    def delete(self, moduleName):
+        if moduleName not in self.pluginsName:
+            return
+        for plugin in self.plugins:
+            if plugin.keys()[0] == moduleName:
+                self.plugins.remove(plugin)
+                return
