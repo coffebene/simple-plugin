@@ -2,3 +2,4 @@
 
 def run():
     print "before 10"
+    return False

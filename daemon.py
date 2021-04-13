@@ -6,7 +6,9 @@
 注意事项：
     1. 插件导入顺序，依赖插件在目录中的顺序（插件实现时，需考虑插件文件在目录中的位置）
     2. 如果多个插件目录中有重名插件，默认只导入第一个目录中找到插件（python import 机制所导致）
-    3. 每个模块插件必须包含run()方法
+    3. 每个插件必须包含run()方法，且必须返回可判断真假的结果，用于判断后续插件是否继续执行
+    4. 主函数需返回{"errCode": 0, "errMsg": "success"}，errCode用于判断后续插件是否执行
+    5. 主函数之间互相隔离。前一个主函数执行失败与否，不会影响后一个主函数的执行
 """
 
 import time
@@ -15,11 +17,13 @@ from plugin import middleware
 
 def test1():
     print "函数1真正执行"
+    return {"errCode": 0, "errMsg": "success"}
 
 
 def test2(t1, t2, t3="hello"):
     print t1, t2, t3
     print "函数2真正执行"
+    return {"errCode": 0, "errMsg": "success"}
 
 
 while True:

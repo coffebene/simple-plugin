@@ -2,3 +2,4 @@
 
 def run():
     print "before  50"
+    return True

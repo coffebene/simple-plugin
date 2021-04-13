@@ -206,8 +206,7 @@ class Middleware(object):
         lp, dp = copy.deepcopy(signature[0]), copy.deepcopy(signature[3])
         # 函数没有参数.则直接执行
         if len(signature[0]) == 0:
-            func()
-            return
+            return func()
         # 获取对应参数
         funcName = func.__name__
         if not plugin:
@@ -241,7 +240,7 @@ class Middleware(object):
                     tParam = k
                     break
             raise ValueError("func %s%s's %s param not provide" % (funcName, tuple(signature[0]), tParam))
-        func(*listParam, **dictParam)
+        return func(*listParam, **dictParam)
     
     # 执行函数
     def process(self):
@@ -255,16 +254,25 @@ class Middleware(object):
             beforePlugins = plugins.get("before", [])
             afterPlugins = plugins.get("after", [])
             # 函数前插件
-            flag = True  # 控制插件是否继续执行
+            flag = True  # 标识插件是否继续执行
             for p in beforePlugins:
                 n, m = p.items()[0]
                 method = getattr(m["module"], "run", None)
                 if isfunction(method):
-                    self.callFunc(method, plugin=True)
-            self.callFunc(func)
-            # 函数后插件
+                    flag = self.callFunc(method, plugin=True)
+                    if not flag:
+                        break
+            # 执行主函数
+            if not flag:
+                continue
+            rst = self.callFunc(func)
+            if rst["errCode"] != 0:
+                return
+                # 函数后插件
             for p in afterPlugins:
                 n, m = p.items()[0]
                 method = getattr(m["module"], "run", None)
                 if isfunction(method):
-                    self.callFunc(method, plugin=True)
+                    flag = self.callFunc(method, plugin=True)
+                    if not flag:
+                        break
