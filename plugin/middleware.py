@@ -264,7 +264,7 @@ class Middleware(object):
                         break
             # 执行主函数
             if not flag:
-                continue
+                continue  # 执行下一个主函数
             rst = self.callFunc(func)
             if rst["errCode"] != 0:
                 return

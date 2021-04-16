@@ -19,13 +19,13 @@ import hashlib
 # 计算文件或目录的md5值
 def md5Sum(entry):
     md5 = hashlib.md5()
-    if os.path.isfile(entry) and glob.fnmatch.fnmatch(entry, "*.py"):
+    if os.path.isfile(entry) and (glob.fnmatch.fnmatch(entry, "*.py") or glob.fnmatch.fnmatch(entry, "*.pyc")):
         with open(entry, "rb") as fd:
             md5.update(fd.read())
     if os.path.isdir(entry):
         for path, dirList, fileList in os.walk(entry):
             for f in fileList:
-                if not glob.fnmatch.fnmatch(f, "*.py"):
+                if not (glob.fnmatch.fnmatch(f, "*.py") and glob.fnmatch.fnmatch(f, "*.pyc")):
                     continue
                 with open(os.path.join(path, f), "rb") as fd:
                     md5.update(fd.read())
@@ -66,11 +66,12 @@ class PluginLoader(object):
                 if loop:
                     plugins.extend(self.findPlugins(pluginDir=location, loop=loop))
                 continue
-            elif os.path.isfile(location) and suffix == ".py" and moduleName != "__init__":
+            elif os.path.isfile(location) and suffix in [".py", ".pyc"] and moduleName != "__init__":
                 info = imp.find_module(moduleName, [pluginDir])
             else:
                 continue
-            plugins.append({"name": moduleName, "info": info, "md5": md5Sum(location)})
+            if moduleName not in [i["name"] for i in plugins]:
+                plugins.append({"name": moduleName, "info": info, "md5": md5Sum(location)})
         return plugins
     
     # 加载plugin。调用findPlugins查找可用plugin并加载
@@ -96,7 +97,7 @@ class PluginLoader(object):
     # 查找module
     def findPlugin(self, pluginDir=None, moduleName=None, loop=False):
         """查找moduleName，并计算md5。如果开启了递归查找，则采用深度优先算法查找模块。
-        
+
         入参：
             pluginDir: 插件目录
             moduleName: 要查找的模块名称
@@ -125,7 +126,7 @@ class PluginLoader(object):
     # 加载module
     def loadPlugin(self, pluginDir=None, moduleName=None, loop=False):
         """加载module。如果没有加载过或有更新，则重新加载，否则直接返回self.plugins中保存的
-        
+
         入参：
             pluginDir: 插件目录
             moduleName: 要导入的模块名称
